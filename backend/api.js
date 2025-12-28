@@ -10,7 +10,7 @@ const port = 0;
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 app.use(function (req, res, next) {
   if (!req.body.path || !req.body.password) {
@@ -28,6 +28,25 @@ const keychainItemMap = {
   inet: 'Internet',
   keys: 'Keys',
 };
+
+// Helper function to safely decode base64 strings
+// Handles URL-safe base64 and padding issues
+function safeBase64Decode(str) {
+  if (!str) return '';
+  // Replace URL-safe characters with standard base64 characters
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  // Add padding if necessary
+  while (base64.length % 4 !== 0) {
+    base64 += '=';
+  }
+  try {
+    return atob(base64);
+  } catch (e) {
+    console.error('Base64 decode error for:', str, e.message);
+    // Return empty string or the original if decoding fails
+    return '';
+  }
+}
 
 app.post('/decrypt', async (req, res) => {
   const tempDir = tmp.dirSync({ unsafeCleanup: true });
@@ -105,7 +124,7 @@ app.post('/update', async (req, res) => {
   Object.keys(keychainItemMap).forEach(key => {
     keychain[key].forEach(item => {
       updatedItems.forEach(update => {
-        const persistentRefWithType = btoa(key + atob(update.persistref));
+        const persistentRefWithType = btoa(key + safeBase64Decode(update.persistref));
         if (item.v_PersistentRef.toString('base64') === persistentRefWithType) {
           partialKeychain[key].forEach(updatedItem => {
             if (updatedItem.v_PersistentRef.toString('base64') === persistentRefWithType) {
@@ -114,6 +133,72 @@ app.post('/update', async (req, res) => {
           });
         }
       });
+    });
+  });
+
+  // Save Keychain
+  const updatedKeychainPath = path.join(tempDir.name, path.join('KeychainDomain', 'keychain-backup.plist'));
+  plist.writeBinaryFileSync(updatedKeychainPath, keychain);
+  const updatedKeychainPlist = fs.readFileSync(updatedKeychainPath);
+  res.setHeader('Content-Disposition', 'attachment; filename=keychain-backup.plist');
+  res.send(updatedKeychainPlist);
+  tempDir.removeCallback();
+});
+
+app.post('/delete', async (req, res) => {
+  const tempDir = tmp.dirSync({ unsafeCleanup: true });
+
+  // Validate delete items
+  if (!req.body.items) {
+    return res.status(400).send('Missing items to delete');
+  }
+
+  const deleteItems = JSON.parse(req.body.items);
+  if (!Array.isArray(deleteItems) || deleteItems.length === 0) {
+    return res.status(400).send('No items specified for deletion');
+  }
+
+  // Create a set of persistrefs to delete for quick lookup
+  const deleteRefs = new Set(deleteItems.map(item => item.persistref));
+
+  // Dump Keychain
+  const iRestore = new IRestore(req.body.path, req.body.password);
+  try {
+    await iRestore.dumpKeys(path.join(tempDir.name, 'keys.json'));
+    await iRestore.restore('KeychainDomain', path.join(tempDir.name, 'KeychainDomain'));
+  } catch (error) {
+    return res.status(500).send(`irestore error: ${error}`);
+  }
+
+  // Load the decrypted keys
+  const partialDecryptedKeychain = JSON.parse(fs.readFileSync(path.join(tempDir.name, 'keys.json')));
+
+  // Remove items from partial decrypted keychain
+  Object.values(keychainItemMap).forEach(value => {
+    partialDecryptedKeychain[value] = partialDecryptedKeychain[value].filter(
+      item => !deleteRefs.has(item.persistref)
+    );
+  });
+
+  fs.writeFileSync(path.join(tempDir.name, 'keys-updated.json'), JSON.stringify(partialDecryptedKeychain, null, 2));
+
+  // Encrypt partial Keychain
+  await iRestore.encryptKeys(path.join(tempDir.name, 'keys-updated.json'), path.join(tempDir.name, 'keys-updated.plist'));
+
+  // Load Keychain
+  const keychain = await plist.readFileSync(path.join(tempDir.name, path.join('KeychainDomain', 'keychain-backup.plist')));
+
+  // Remove items from keychain plist
+  Object.keys(keychainItemMap).forEach(key => {
+    keychain[key] = keychain[key].filter(item => {
+      // Check if this item should be deleted
+      for (const deleteItem of deleteItems) {
+        const persistentRefWithType = btoa(key + safeBase64Decode(deleteItem.persistref));
+        if (item.v_PersistentRef.toString('base64') === persistentRefWithType) {
+          return false; // Filter out this item
+        }
+      }
+      return true; // Keep this item
     });
   });
 

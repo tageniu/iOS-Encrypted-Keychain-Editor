@@ -95,6 +95,7 @@ type KeychainProps = {
 function Keychain({ backupPath, password, backButton }: KeychainProps): JSX.Element {
   const [data, setData] = useState<Keychain>();
   const [updatedItems, setUpdatedItems] = useState<KeychainItem[]>([]);
+  const [deletedItems, setDeletedItems] = useState<KeychainItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [modalIsOpen, setIsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -188,15 +189,28 @@ function Keychain({ backupPath, password, backButton }: KeychainProps): JSX.Elem
 
     let response;
     try {
-      response = await axios.post(
-        `http://localhost:${port}/update`,
-        {
-          path: backupPath,
-          password: password,
-          items: JSON.stringify(updatedItems),
-        },
-        { responseType: 'blob' }
-      );
+      // If there are deletions, call delete endpoint; otherwise call update endpoint
+      if (deletedItems.length > 0) {
+        response = await axios.post(
+          `http://localhost:${port}/delete`,
+          {
+            path: backupPath,
+            password: password,
+            items: JSON.stringify(deletedItems),
+          },
+          { responseType: 'blob' }
+        );
+      } else {
+        response = await axios.post(
+          `http://localhost:${port}/update`,
+          {
+            path: backupPath,
+            password: password,
+            items: JSON.stringify(updatedItems),
+          },
+          { responseType: 'blob' }
+        );
+      }
     } catch (error: unknown) {
       if (error instanceof AxiosError && error.response) {
         alert(await error.response.data.text());
@@ -214,13 +228,29 @@ function Keychain({ backupPath, password, backButton }: KeychainProps): JSX.Elem
 
   function discardChanges() {
     setUpdatedItems([]);
+    setDeletedItems([]);
+  }
+
+  function deleteKeychainItem(item: KeychainItem) {
+    // Add to deleted items list
+    setDeletedItems((prev) => [...prev, item]);
+
+    // Remove from UI data
+    const newData = { ...data } as Keychain;
+    Object.keys(keychainTypesMap).forEach((type) => {
+      const keychainItems = newData[type as KeychainType];
+      keychainItems.items = keychainItems.items.filter(
+        (i: KeychainItem) => i.persistref !== item.persistref
+      );
+    });
+    setData(newData);
   }
 
   function downloadButtonDisabled() {
     if (keychainEncrypting) {
       return true;
     }
-    return updatedItems.length === 0;
+    return updatedItems.length === 0 && deletedItems.length === 0;
   }
 
   function saveButtonDisabled() {
@@ -255,18 +285,18 @@ function Keychain({ backupPath, password, backButton }: KeychainProps): JSX.Elem
           Back
         </button>
         {data && (
-          <form className="form-inline">
+          <form className="form-inline d-flex align-items-center gap-2">
             <span className="px-2">
-              {updatedItems.length} item{updatedItems.length !== 1 && 's'} edited{keychainEncrypting && ' (encrypting…)'}
+              {updatedItems.length} edited, {deletedItems.length} to delete
+              {keychainEncrypting && ' (processing…)'}
             </span>
-            {updatedItems.length > 0 && (
-              <button onClick={discardChanges} type="button" className="btn btn-danger">
-                Discard Changes
+            {(updatedItems.length > 0 || deletedItems.length > 0) && (
+              <button onClick={discardChanges} type="button" className="btn btn-warning btn-sm">
+                Discard All Changes
               </button>
             )}
-            &nbsp;
-            <button onClick={downloadKeychain} type="button" className="btn btn-primary" disabled={downloadButtonDisabled()}>
-              Download Keychain Backup
+            <button onClick={downloadKeychain} type="button" className="btn btn-primary btn-sm" disabled={downloadButtonDisabled()}>
+              Download Edited Backup
             </button>
           </form>
         )}
@@ -294,7 +324,7 @@ function Keychain({ backupPath, password, backButton }: KeychainProps): JSX.Elem
             <div className="tab-content">
               {Object.keys(keychainTypesMap).map((type, index) => (
                 <div key={type} className={'tab-pane fade' + (index === 0 ? ' show active' : '')} id={type}>
-                  <Table key={type} data={Array.from(data[type as KeychainType].items)} count={data[type as KeychainType].total} openModal={openModal} />
+                  <Table key={type} data={Array.from(data[type as KeychainType].items)} count={data[type as KeychainType].total} openModal={openModal} onDelete={deleteKeychainItem} />
                 </div>
               ))}
             </div>

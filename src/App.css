@@ -53,6 +53,8 @@ table td {
   white-space: nowrap;
 }
 
-table th:last-child {
-  width: 62px;
+table th:last-child,
+table td:last-child {
+  width: 150px;
+  overflow: visible;
 }

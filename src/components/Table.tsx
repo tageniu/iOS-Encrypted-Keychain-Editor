@@ -5,6 +5,7 @@ type TableProps = {
   data: KeychainItem[];
   count: number;
   openModal: (arg0: KeychainItem) => void;
+  onDelete: (arg0: KeychainItem) => void;
 };
 
 const columns = [
@@ -30,11 +31,17 @@ const columns = [
   },
 ];
 
-function Table({ data, count, openModal }: TableProps) {
+function Table({ data, count, openModal, onDelete }: TableProps) {
   const { getTableProps, getTableBodyProps, headerGroups, rows, prepareRow } = useTable<KeychainItem>({
     columns,
     data,
   });
+
+  function handleDelete(item: KeychainItem) {
+    if (window.confirm(`Are you sure you want to delete this keychain item?\n\nGroup: ${item.agrp}\nLabel: ${item.labl || 'N/A'}`)) {
+      onDelete(item);
+    }
+  }
 
   return (
     <>
@@ -49,7 +56,7 @@ function Table({ data, count, openModal }: TableProps) {
               {headerGroup.headers.map((column) => (
                 <th {...column.getHeaderProps()}>{column.render('Header')}</th>
               ))}
-              <th></th>
+              <th>Actions</th>
             </tr>
           ))}
         </thead>
@@ -61,9 +68,12 @@ function Table({ data, count, openModal }: TableProps) {
                 {row.cells.map((cell) => {
                   return <td {...cell.getCellProps()}>{cell.render('Cell')}</td>;
                 })}
-                <td align="right">
-                  <button onClick={() => openModal(data[index])} type="button" className="btn btn-primary">
+                <td align="right" style={{ whiteSpace: 'nowrap' }}>
+                  <button onClick={() => openModal(data[index])} type="button" className="btn btn-primary btn-sm" style={{ marginRight: '5px' }}>
                     Edit
+                  </button>
+                  <button onClick={() => handleDelete(data[index])} type="button" className="btn btn-danger btn-sm">
+                    Delete
                   </button>
                 </td>
               </tr>
@@ -76,3 +86,4 @@ function Table({ data, count, openModal }: TableProps) {
 }
 
 export default Table;
+
